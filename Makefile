@@ -1,19 +1,14 @@
 CC=clang
-CFLAGS=-O4 -arch x86_64
-#CFLAGS=-gfull -arch x86_64
+ARCHFLAGS=-arch i386
+#CFLAGS=-O4
+CFLAGS=-gfull
 CXX=llvm-g++
-#CXXFLAGS=-gfull -arch x86_64
-CXXFLAGS=-O4 -arch x86_64
-LDFLAGS=-arch x86_64
-
-test: test.o gc.o
-	$(CXX) $(LDFLAGS) -o $@ $^
-
-test.o: test.c gc.h
-	$(CC) $(CFLAGS) -c -o $@ $<
+CXXFLAGS=-gfull
+#CXXFLAGS=-O4
+LDFLAGS=
 
 gc.o: gc.cpp gc.h
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) $(ARCHFLAGS) -c -o $@ $<
 
 clean:
-	rm -rf test *.o
+	rm -rf *.o

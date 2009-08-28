@@ -27,6 +27,10 @@
 namespace
 {
 
+bool shuttingDown = false;
+bool disableFinalisers = false;
+bool disableTrivialExecution = false;
+
 class GCObject;
 
 class GCWeakReference;
@@ -226,7 +230,7 @@ public:
 	
 	~GCObject ()
 	{
-		if (finaliser)
+		if (finaliser && !disableFinalisers)
 			finaliser(address);
 		for (std::set<GCReference*>::iterator iter = ownedReferences.begin(); iter != ownedReferences.end(); ++iter)
 		{
@@ -240,13 +244,8 @@ public:
 		}
 	}
 	
-	void Condemn ()
-	{
-		if (condemned)
-			return;
-		condemned = true;
-		delete this;
-	}
+	void Condemn ( GCReference* lastReference );
+	bool IsCondemned () { return condemned; }
 	
 	void* Address ()
 	{
@@ -262,82 +261,204 @@ public:
 	void* GetPointer () { return address; }
 };
 
-std::map<void*, GCObject*> masterObjectSet;
-std::map<void*, GCObject*> nurseryObjectSet;
-
-GCLock globalLock;
-
-void DoCollection ( std::map<void*, GCObject*>& field, std::map<void*, GCObject*>& superField )
+class GCField
 {
-	std::set<GCObject*> referencedObjects;
-	std::queue<GCObject*> worklist;
-	// root object is the first one to talk to
-	worklist.push(rootObject);
-	referencedObjects.insert(rootObject);
-	// work through list of all referenced objects
-	while (!worklist.empty())
+private:
+	GCObject* LookupRecursive ( void* ptr )
 	{
-		GCObject* target = worklist.front();
-		ASSERT(target, "null target in DoCollection");
-		worklist.pop();
-		// look through all refs owned by this object
-		for (std::set<GCReference*>::iterator iter = target->ownedReferences.begin(); iter != target->ownedReferences.end(); ++iter)
-		{
-			// this discards weak references
-			GCStrongReference* sr = (*iter)->StrongReference();
-			if (!sr)
-				continue;
-			// get the target of this
-			GCObject* liveObject = sr->Target();
-			ASSERT(liveObject, "found null target");
-			if (liveObject == target)
-				continue; // object is self-referential, early exit
-			// if we don't already have it listed, insert it
-			if (referencedObjects.find(liveObject) == referencedObjects.end())
-			{
-				worklist.push(liveObject);
-				referencedObjects.insert(liveObject);
-			}
-		}
+		std::map<void*, GCObject*>::iterator iter = field.find(ptr);
+		if (iter != field.end())
+			return iter->second;
+		else
+			if (parent)
+				return parent->LookupRecursive(ptr);
+			else
+				return NULL;
 	}
-	// work through all objects
-	for (std::map<void*, GCObject*>::iterator iter = field.begin(); iter != field.end(); ++iter)
+	
+	static void DoCollection ( std::map<void*, GCObject*>& field, std::map<void*, GCObject*>& targetField, GCField* parent )
 	{
-		GCObject* target = iter->second;
-		ASSERT(target, "found null target in entire object list");
-		// is it trivially referenced
-		bool isReferenced = referencedObjects.find(target) != referencedObjects.end();
-		// if unreferenced, try the superfield?
-		if (!isReferenced && !superField.empty())
+		std::set<GCObject*> referencedObjects;
+		std::queue<GCObject*> worklist;
+		// root object is the first one to talk to
+		worklist.push(rootObject);
+		referencedObjects.insert(rootObject);
+		// work through list of all referenced objects
+		while (!worklist.empty())
 		{
-			for (std::set<GCReference*>::iterator iter = target->pointingReferences.begin(); iter != target->pointingReferences.end(); ++iter)
+			GCObject* target = worklist.front();
+			ASSERT(target, "null target in DoCollection");
+			worklist.pop();
+			// look through all refs owned by this object
+			for (std::set<GCReference*>::iterator iter = target->ownedReferences.begin(); iter != target->ownedReferences.end(); ++iter)
 			{
-				GCReference* ref = *iter;
-				ASSERT(ref, "found null reference in pointing reference list");
-				if (ref->IsWeak())
-					continue; // uninterested in weak references
-				if (superField.find(ref->Owner()->Address()) != superField.end())
+				// this discards weak references
+				GCStrongReference* sr = (*iter)->StrongReference();
+				if (!sr)
 				{
-					// we found a reference from the superfield, assume it's referenced
-					isReferenced = true;
-					break;
+					continue;
+				}
+				// get the target of this
+				GCObject* liveObject = sr->Target();
+				ASSERT(liveObject, "found null target");
+				if (liveObject == target)
+				{
+					continue; // object is self-referential, early exit
+				}
+				// grab only targets in this field
+				if (field.find(liveObject->Address()) == field.end())
+				{
+					continue;
+				}
+				// if we don't already have it listed, insert it
+				if (referencedObjects.find(liveObject) == referencedObjects.end())
+				{
+					worklist.push(liveObject);
+					referencedObjects.insert(liveObject);
 				}
 			}
 		}
-		if (!isReferenced)
+		// work through all objects
+		disableTrivialExecution = true;
+		for (std::map<void*, GCObject*>::iterator iter = field.begin(); iter != field.end(); ++iter)
 		{
-			// unreferenced
-			ASSERT(target != rootObject, "root object ended up unreferenced?");
-			DEBUG(printf("[GC] -OBJ %p (not connected to root in object graph)\n", target->Address()));
-			target->Condemn();
+			GCObject* target = iter->second;
+			ASSERT(target, "found null target in entire object list");
+			// is it trivially referenced
+			bool isReferenced = referencedObjects.find(target) != referencedObjects.end();
+			// if unreferenced, try the parent?
+			if (!isReferenced && parent)
+			{
+				for (std::set<GCReference*>::iterator iter = target->pointingReferences.begin(); iter != target->pointingReferences.end(); ++iter)
+				{
+					GCReference* ref = *iter;
+					ASSERT(ref, "found null reference in pointing reference list");
+					if (ref->IsWeak())
+						continue; // uninterested in weak references
+					// is the ref owner somewhere up in the heirarchy?
+					if (parent->LookupRecursive(ref->Owner()->Address()))
+					{
+						isReferenced = true;
+						break;
+					}
+				}
+			}
+			if (!isReferenced)
+			{
+				// unreferenced
+				ASSERT(target != rootObject, "root object ended up unreferenced?");
+				worklist.push(target);
+			}
+			else
+			{
+				targetField.insert(*iter);
+			}
+		}
+		disableTrivialExecution = false;
+		while (!worklist.empty())
+		{
+			worklist.front()->Condemn(NULL);
+			worklist.pop();
+		}
+		field.clear();
+	}
+	std::map<void*, GCObject*> field;
+	GCField* parent;
+public:
+	GCField ( GCField* aParent ) : parent(aParent) {}
+	~GCField ()
+	{
+		for (std::map<void*, GCObject*>::iterator iter = field.begin(); iter != field.end(); iter++)
+		{
+			delete iter->second;
+		}
+		if (parent) delete parent;
+	}
+	void Collect ( int depth )
+	{
+		if (parent)
+		{
+			DoCollection(field, parent->field, parent);
+			ASSERT(field.empty(), "secondary field not empty after collection");
 		}
 		else
 		{
-			superField.insert(*iter);
+			std::map<void*, GCObject*> replacementField;
+			DoCollection(field, replacementField, NULL);
+			field.swap(replacementField);
+		}
+		depth--;
+		if (depth > 0 && parent)
+		{
+			parent->Collect(depth);
+			ASSERT(field.empty(), "field not empty after parent collection");
 		}
 	}
-	field.clear();
+	void InsertShallow ( GCObject* object )
+	{
+		field[object->Address()] = object;
+	}
+	void InsertDeep ( GCObject* object )
+	{
+		if (parent)
+			parent->InsertDeep(object);
+		else
+			InsertShallow(object);
+	}
+	GCObject* Lookup ( void* ptr )
+	{
+		return LookupRecursive(ptr);
+	}
+	void Remove ( GCObject* obj )
+	{
+		ASSERT(!disableTrivialExecution, "Remove() called with TE disabled");
+		std::map<void*, GCObject*>::iterator iter = field.find(obj->Address());
+		if (iter != field.end())
+			field.erase(iter);
+		else if (parent)
+			parent->Remove(obj);
+	}
+};
+
+GCField* field;
+
+void GCObject::Condemn ( GCReference* lastReference )
+{
+	if (condemned || (lastReference && disableTrivialExecution))
+		return;
+	condemned = true;
+	if (lastReference)
+	{
+		std::set<GCReference*>::iterator iter = pointingReferences.find(lastReference);
+		ASSERT(iter != pointingReferences.end(), "lastReference not pointing");
+		pointingReferences.erase(iter);
+	}
+	else
+	{
+		std::vector<GCReference*> worklist;
+		std::set<GCReference*>::iterator iter;
+		for (iter = pointingReferences.begin(); iter != pointingReferences.end(); ++iter)
+		{
+			if (!(*iter)->IsWeak())
+			{
+				worklist.push_back(*iter);
+			}
+		}
+		for (std::vector<GCReference*>::iterator wlIter = worklist.begin(); wlIter != worklist.end(); ++wlIter)
+		{
+			iter = pointingReferences.find(*wlIter);
+			ASSERT(iter != pointingReferences.end(), "worklist item not in reference list");
+			pointingReferences.erase(iter);
+		} 
+	}
+	field->Remove(this);
+	delete this;
 }
+
+#define FIELDCOUNT 3
+#define FIELDPARTIALDEPTH 1
+
+GCLock globalLock;
 
 GCWeakReference::GCWeakReference ( GCObject* anOwner, GCObject* aTarget, void** aPointerLocation )
 : GCReference(anOwner, aTarget),
@@ -365,36 +486,27 @@ GCStrongReference::~GCStrongReference ()
 
 void CollectPartial ()
 {
-	DoCollection(nurseryObjectSet, masterObjectSet);
+	field->Collect(FIELDPARTIALDEPTH);
 }
 
 void CollectFull ()
 {
-	std::map<void*, GCObject*> aMap;
-	DoCollection(masterObjectSet, aMap);
-	masterObjectSet.swap(aMap);
+	field->Collect(FIELDCOUNT);
 }
 
 GCObject* GetObject ( void* ptr )
 {
-	std::map<void*, GCObject*>::iterator iter = nurseryObjectSet.find(ptr);
-	if (iter != nurseryObjectSet.end())
-	{
-		return iter->second;
-	}
-	iter = masterObjectSet.find(ptr);
-	if (iter != masterObjectSet.end())
-	{
-		return iter->second;
-	}
-	ASSERT(0, "GetObject returned 0");
-	return NULL;
+	GCObject* object = field->Lookup(ptr);
+	//ASSERT(object, "GetObject returned 0");
+	return object;
 }
 
 void Unreference ( GCObject* src, GCObject* dst, bool isWeak )
 {
+	ASSERT(src, "Unreference with src=null");
+	ASSERT(dst, "Unreference with dst=null");
 	globalLock.WriteLock();
-	for (std::set<GCReference*>::iterator iter = src->ownedReferences.begin(); iter != src->pointingReferences.end(); iter++)
+	for (std::set<GCReference*>::iterator iter = src->ownedReferences.begin(); iter != src->ownedReferences.end(); iter++)
 	{
 		GCReference* ref = *iter;
 		ASSERT(ref, "found null reference in owned references list");
@@ -411,13 +523,16 @@ void Unreference ( GCObject* src, GCObject* dst, bool isWeak )
 void GCWeakReference::OwnerDied ()
 {
 	std::set<GCReference*>::iterator iter;
-	iter = target->pointingReferences.find(this);
-	ASSERT(iter != target->pointingReferences.end(), "reference isn't in pointing list");
-	target->pointingReferences.erase(iter);
-	if (!target->IsReferenced())
+	if (!target->IsCondemned())
 	{
-		DEBUG(printf("[GC] -OBJ %p (completely unreferenced)\n", target->Address()));
-		target->Condemn();
+		iter = target->pointingReferences.find(this);
+		ASSERT(iter != target->pointingReferences.end(), "reference isn't in pointing list");
+		target->pointingReferences.erase(iter);
+		if (!target->IsReferenced() && !disableTrivialExecution)
+		{
+			DEBUG(printf("[GC] -OBJ %p (completely unreferenced)\n", target->Address()));
+			target->Condemn(NULL);
+		}
 	}
 	delete this;
 }
@@ -428,9 +543,17 @@ void GCWeakReference::OwnerDisowned ()
 	iter = owner->ownedReferences.find(this);
 	ASSERT(iter != owner->ownedReferences.end(), "reference isn't in owned list");
 	owner->ownedReferences.erase(iter);
-	iter = target->pointingReferences.find(this);
-	ASSERT(iter != target->pointingReferences.end(), "reference isn't in pointing list");
-	target->pointingReferences.erase(iter);;
+	if (!target->IsCondemned())
+	{
+		iter = target->pointingReferences.find(this);
+		ASSERT(iter != target->pointingReferences.end(), "reference isn't in pointing list");
+		target->pointingReferences.erase(iter);
+		if (!target->IsReferenced() && !disableTrivialExecution)
+		{
+			DEBUG(printf("[GC] -OBJ %p (completely unreferenced)\n", target->Address()));
+			target->Condemn(NULL);
+		}
+	}
 	delete this;
 }
 
@@ -447,13 +570,16 @@ void GCWeakReference::TargetDied ()
 void GCStrongReference::OwnerDied ()
 {
 	std::set<GCReference*>::iterator iter;
-	iter = target->pointingReferences.find(this);
-	ASSERT(iter != target->pointingReferences.end(), "reference isn't in pointing list");
-	target->pointingReferences.erase(iter);
-	if (!target->IsReferenced())
+	if (!target->IsCondemned())
 	{
-		DEBUG(printf("[GC] -OBJ %p (completely unreferenced)\n", target->Address()));
-		target->Condemn();
+		iter = target->pointingReferences.find(this);
+		ASSERT(iter != target->pointingReferences.end(), "reference isn't in pointing list");
+		target->pointingReferences.erase(iter);
+		if (!target->IsReferenced() && !disableTrivialExecution)
+		{
+			DEBUG(printf("[GC] -OBJ %p (completely unreferenced)\n", target->Address()));
+			target->Condemn(NULL);
+		}
 	}
 	delete this;
 }
@@ -464,9 +590,17 @@ void GCStrongReference::OwnerDisowned ()
 	iter = owner->ownedReferences.find(this);
 	ASSERT(iter != owner->ownedReferences.end(), "reference isn't in owned list");
 	owner->ownedReferences.erase(iter);
-	iter = target->pointingReferences.find(this);
-	ASSERT(iter != target->pointingReferences.end(), "reference isn't in pointing list");
-	target->pointingReferences.erase(iter);
+	if (!target->IsCondemned())
+	{
+		iter = target->pointingReferences.find(this);
+		ASSERT(iter != target->pointingReferences.end(), "reference isn't in pointing list");
+		target->pointingReferences.erase(iter);
+		if (!target->IsReferenced() && !disableTrivialExecution)
+		{
+			DEBUG(printf("[GC] -OBJ %p (completely unreferenced)\n", target->Address()));
+			target->Condemn(NULL);
+		}
+	}
 	delete this;
 }
 
@@ -474,7 +608,10 @@ void GCStrongReference::TargetDied ()
 {
 	// ...the hell?
 	std::set<GCReference*>::iterator iter;
-	ASSERT(0, "target died with strong reference attached");
+	if (!shuttingDown) // crazy shiz does happen whilst shutting down
+	{
+		ASSERT(0, "target died with strong reference attached");
+	}
 	iter = owner->ownedReferences.find(this);
 	ASSERT(iter != owner->ownedReferences.end(), "reference isn't in owned list");
 	owner->ownedReferences.erase(iter);
@@ -493,34 +630,36 @@ void GC_init ()
 	DEBUG(printf("[GC] \tsizeof(GCReference) = %d\n", sizeof(GCReference)));
 	DEBUG(printf("[GC] \tsizeof(GCStrongReference) = %d\n", sizeof(GCStrongReference)));
 	DEBUG(printf("[GC] \tsizeof(GCWeakReference) = %d\n", sizeof(GCWeakReference)));
+	DEBUG(printf("[GC] \tsizeof(GCField) = %d\n", sizeof(GCField)));
 	if (sizeof(unsigned long) == 4)
 		rootObjectPointer = (void*)0xCAFEBABEUL;
 	else
 		rootObjectPointer = (void*)0xDEADBEEFFEEDFACEULL;
 	rootObject = new GCObject(rootObjectPointer, 0);
 	globalLock.WriteLock();
-	masterObjectSet[rootObjectPointer] = rootObject;
+	field = new GCField(NULL);
+	for (int i = 1; i < FIELDCOUNT; i++)
+		field = new GCField(field);
+	field->InsertDeep(rootObject);
 	globalLock.WriteUnlock();
+}
+
+void GC_terminate ( bool callFinalisers )
+{
+	disableFinalisers = !callFinalisers;
+	shuttingDown = true;
+	delete field;
+	shuttingDown = false;
+	disableFinalisers = false;
 }
 
 void GC_collect ( bool partial )
 {
 	globalLock.WriteLock();
-	DEBUG(printf("[GC] doing generational collection\n"));
-	CollectPartial();
-	if (!partial)
-	{
-		DEBUG(printf("[GC] ... and going on to full collection\n"));
-		CollectFull();
-	}
+	DEBUG(printf("[GC] doing %s collection\n", partial ? "generational" : "full"));
+	(partial ? CollectPartial : CollectFull)();
 	DEBUG(printf("[GC] collection finished\n"));
 	globalLock.WriteUnlock();
-}
-
-void GC_autorelease ( void* object )
-{
-	ASSERT(object, "tried to autorelease bad object");
-	GC_unregister_reference(rootObjectPointer, object);
 }
 
 void GC_register_object ( void* object, void (*finaliser)(void*) )
@@ -532,8 +671,8 @@ void GC_register_object ( void* object, void (*finaliser)(void*) )
 	ASSERT(reference, "could not allocate new GCStrongReference");
 	obj->pointingReferences.insert(reference);
 	globalLock.WriteLock();
-	nurseryObjectSet.insert(std::make_pair(object, obj));
 	rootObject->ownedReferences.insert(reference);
+	field->InsertShallow(obj);
 	globalLock.WriteUnlock();
 }
 
@@ -594,4 +733,12 @@ void GC_unregister_weak_reference ( void* object, void* target, void** pointer )
 	ASSERT(dst, "could not get dst");
 	globalLock.ReadUnlock();
 	Unreference(src, dst, true);
+}
+
+bool GC_object_live ( void* object )
+{
+	globalLock.ReadLock();
+	GCObject* src = GetObject(object);
+	globalLock.ReadUnlock();
+	return src != NULL;
 }

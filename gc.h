@@ -10,6 +10,10 @@ extern "C"
  */
 void GC_init ();
 /**
+ * SHUT DOWN EVERYTHING
+ */
+void GC_terminate ( bool callFinalisers );
+/**
  * Perform a GC collection
  *
  * @param partial Whether to make this is a small partial collection or a full collection.
@@ -29,7 +33,7 @@ void GC_register_object ( void* object, void (*finaliser)(void*) );
  *
  * This should be done on an object after it has been registered with the stack frame.
  */
-void GC_autorelease ( void* object );
+#define GC_autorelease(object) GC_unregister_reference(GC_root(), object)
 /**
  * Register a reference to an object.
  *
@@ -64,6 +68,10 @@ void GC_register_weak_reference ( void* object, void* target, void** pointer );
  * @param pointer The address of the actual reference
  */
 void GC_unregister_weak_reference ( void* object, void* target, void** pointer );
+/**
+ * Checks if a given object is live.
+ */
+bool GC_object_live ( void* object );
 
 #ifdef __cplusplus
 }
