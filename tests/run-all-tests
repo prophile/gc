@@ -1,0 +1,3 @@
+#!/bin/bash
+find . -name "*.c" -execdir ./run-test "{}" ";"
+

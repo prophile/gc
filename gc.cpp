@@ -22,7 +22,7 @@
 #define ASSERT(x, msg)
 #endif
 
-#define SINGLE_THREADED
+//#define SINGLE_THREADED
 
 namespace
 {
@@ -73,6 +73,42 @@ public:
 	void WriteUnlock () {}
 };
 #else
+static bool AtomicCAS ( volatile uint32_t* ptr, uint32_t oldVal, uint32_t newVal )
+{
+	return __sync_bool_compare_and_swap(ptr, oldVal, newVal);
+}
+
+static void AtomicFence ()
+{
+	__sync_synchronize();
+}
+
+static bool AtomicBitwise ( volatile uint32_t* ptr, uint32_t set, uint32_t clear, bool tryOnly = false )
+{
+	uint32_t oldVal, newVal;
+	do
+	{
+		oldVal = *ptr;
+		newVal = oldVal | set;
+		newVal = newVal & ~clear;
+		if (tryOnly)
+		{
+			return AtomicCAS(ptr, oldVal, newVal);
+		}
+	} while (!AtomicCAS(ptr, oldVal, newVal));
+	return true;
+}
+
+static bool AtomicSetBits ( volatile uint32_t* ptr, uint32_t bits, bool tryOnly = false )
+{
+	return AtomicBitwise(ptr, bits, 0, tryOnly);
+}
+
+static bool AtomicClearBits ( volatile uint32_t* ptr, uint32_t bits, bool tryOnly = false )
+{
+	return AtomicBitwise(ptr, 0, bits, tryOnly);
+}
+
 class GCLock
 {
 private:
@@ -92,9 +128,10 @@ public:
 			uint32_t newReadCount = status >> 2;
 			newReadCount += 1;
 			newReadCount <<= 2;
-			haveLock = __sync_bool_compare_and_swap(&status, oldReadCount, newReadCount);
-			__sync_synchronize();
+			haveLock = AtomicCAS(&status, oldReadCount, newReadCount);
+			AtomicFence();
 		}
+		DEBUG(printf("[GC] +LK RD\n"));
 	}
 	
 	void ReadUnlock ()
@@ -104,30 +141,35 @@ public:
 		{
 			uint32_t oldReadCount = status;
 			uint32_t newReadCount = status >> 2;
+			ASSERT(newReadCount > 0, "unlocking already unlocked read lock");
 			newReadCount -= 1;
 			newReadCount <<= 2;
-			haveUnlock = __sync_bool_compare_and_swap(&status, oldReadCount, newReadCount);
-			__sync_synchronize();
+			haveUnlock = AtomicCAS(&status, oldReadCount, newReadCount);
+			AtomicFence();
 		}
+		DEBUG(printf("[GC] -LK RD\n"));
 	}
 	
 	void WriteLock ()
 	{
 		bool haveLock = false;
+		const uint32_t MASK = ~3;
 		while (!haveLock)
 		{
-			__sync_or_and_fetch(&status, 2);
-			uint32_t mask = ~3;
-			WAITCONDITION(status & mask == 0)
-			{
-			}
-			haveLock = __sync_bool_compare_and_swap(&status, 2, 1);
+			AtomicSetBits(&status, 2);
+			WAITCONDITION((status & MASK) == 0);
+			haveLock = AtomicBitwise(&status, 1, 2, true);
+			AtomicFence();
 		}
+		DEBUG(printf("[GC] +LK WR\n"));
 	}
 	
 	void WriteUnlock ()
 	{
-		__sync_and_and_fetch(&status, ~(uint32_t)1);
+		ASSERT(status & 1, "unlocked already unlocked write lock");
+		AtomicClearBits(&status, 1);
+		AtomicFence();
+		DEBUG(printf("[GC] -LK WR\n"));
 	}
 };
 #endif

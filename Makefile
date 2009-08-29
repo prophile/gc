@@ -1,5 +1,5 @@
 CC=clang
-ARCHFLAGS=-arch i386
+ARCHFLAGS=-arch x86_64
 #CFLAGS=-O4
 CFLAGS=-gfull
 CXX=llvm-g++

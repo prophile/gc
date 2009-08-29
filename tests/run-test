@@ -1,7 +1,8 @@
 #!/bin/sh
+ARCHFLAGS="-arch x86_64"
 cd .. ; make ; cd tests
-clang -gfull -c -o current-test.o -I.. "$1" || exit 1
-llvm-g++ -gfull -o current-test current-test.o ../gc.o
+clang $ARCHFLAGS -gfull -c -o current-test.o -I.. "$1" || exit 1
+llvm-g++ $ARCHFLAGS -gfull -o current-test current-test.o ../gc.o
 ./current-test || exit 1
 # rm current-test current-test.o
 
