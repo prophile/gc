@@ -258,14 +258,16 @@ private:
 	void* address;
 	void (*finaliser)(void*);
 	bool condemned;
+	size_t selfAssignedLength;
 public:
 	std::set<GCReference*> pointingReferences;
 	std::set<GCReference*> ownedReferences;
 public:
-	GCObject ( void* anAddress, void (*aFinaliser)(void*) )
+	GCObject ( void* anAddress, void (*aFinaliser)(void*), size_t selfAssignedLen )
 	: address(anAddress),
 	  finaliser(aFinaliser),
-	  condemned(false)
+	  condemned(false),
+	  selfAssignedLength(selfAssignedLen)
 	{
 		ASSERT(anAddress, "object constructed with null address");
 		DEBUG(printf("[GC] +OBJ %p\n", anAddress));
@@ -284,6 +286,10 @@ public:
 		{
 			ASSERT(*iter, "null reference found in pointing reference list");
 			(*iter)->TargetDied();
+		}
+		if (selfAssignedLength > 0)
+		{
+			free(address);
 		}
 	}
 	
@@ -711,7 +717,7 @@ void GC_init ()
 		rootObjectPointer = (void*)0xCAFEBABEUL;
 	else
 		rootObjectPointer = (void*)0xDEADBEEFFEEDFACEULL;
-	rootObject = new GCObject(rootObjectPointer, 0);
+	rootObject = new GCObject(rootObjectPointer, 0, 0);
 	globalLock.WriteLock();
 	field = new GCField(NULL);
 	for (int i = 1; i < FIELDCOUNT; i++)
@@ -738,10 +744,27 @@ void GC_collect ( bool partial )
 	globalLock.WriteUnlock();
 }
 
+void* GC_new_object ( unsigned long len, void (*finaliser)(void*) )
+{
+	if (len < sizeof(void*))
+		len = sizeof(void*);
+	void* pointer = malloc(len);
+	GCObject* obj = new GCObject(pointer, finaliser, len);
+	ASSERT(obj, "could not allocate new GCObject");
+	GCStrongReference* reference = new GCStrongReference(rootObject, obj, NULL);
+	ASSERT(reference, "could not allocate new GCStrongReference");
+	obj->pointingReferences.insert(reference);
+	globalLock.WriteLock();
+	rootObject->ownedReferences.insert(reference);
+	field->InsertShallow(obj);
+	globalLock.WriteUnlock();
+	return pointer;
+}
+
 void GC_register_object ( void* object, void (*finaliser)(void*) )
 {
 	ASSERT(object, "tried to register bad object");
-	GCObject* obj = new GCObject(object, finaliser);
+	GCObject* obj = new GCObject(object, finaliser, 0);
 	ASSERT(obj, "could not allocate new GCObject");
 	GCStrongReference* reference = new GCStrongReference(rootObject, obj, NULL);
 	ASSERT(reference, "could not allocate new GCStrongReference");

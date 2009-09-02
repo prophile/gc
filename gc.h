@@ -20,6 +20,15 @@ void GC_terminate ( bool callFinalisers );
  */
 void GC_collect ( bool partial );
 /**
+ * Create a new object using the GC subsystem, assumed live.
+ *
+ * This object will have a reference from the root object until specifically directed otherwise.
+ *
+ * @param len The length of the object.
+ * @param finaliser The function to call when finished, or NULL.
+ */
+void* GC_new_object ( unsigned long len, void (*finaliser)(void*) );
+/**
  * Register an object with the GC subsystem, assumed live.
  *
  * This object will have a reference from the root object until specifically directed otherwise.
