@@ -17,7 +17,8 @@ static void __finaliser ( void* ptr )
 #define ASSERT(x, message) if (!(x)) { printf("Assertion failure: %s\n\t%s : %d\n", message, __FILE__, __LINE__); abort(); }
 
 typedef void* object;
-static object NEW () { object obj = malloc(10); GC_register_object(obj, __finaliser); return obj; }
+static object NEW () { object obj = GC_new_object(10, GC_ROOT, __finaliser); return obj; }
+static void RELEASE ( object obj ) { GC_unregister_reference(GC_ROOT, obj); }
 
 #define ASSERTLIVE(obj) ASSERT(GC_object_live(obj), "object murdered")
 #define ASSERTDEAD(obj) ASSERT(!GC_object_live(obj), "object survived unexpectedly")

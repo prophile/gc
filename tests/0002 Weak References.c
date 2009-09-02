@@ -10,7 +10,7 @@ int main ()
 	GC_collect(0);
 	ASSERTLIVE(obj);
 	ASSERTWRL(handle);
-	GC_autorelease(obj);
+	RELEASE(obj);
 	GC_collect(0);
 	ASSERTDEAD(obj);
 	ASSERTWRZ(handle);

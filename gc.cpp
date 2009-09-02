@@ -752,33 +752,39 @@ void GC_collect ( bool partial )
 	globalLock.WriteUnlock();
 }
 
-void* GC_new_object ( unsigned long len, void (*finaliser)(void*) )
+void* GC_new_object ( unsigned long len, void* owner, void (*finaliser)(void*) )
 {
 	if (len < sizeof(void*))
 		len = sizeof(void*);
 	void* pointer = malloc(len);
 	GCObject* obj = new GCObject(pointer, finaliser, len);
 	ASSERT(obj, "could not allocate new GCObject");
-	GCStrongReference* reference = new GCStrongReference(rootObject, obj, NULL);
+	globalLock.ReadLock();
+	GCObject* owningObject = GetObject(owner);
+	GCStrongReference* reference = new GCStrongReference(owningObject, obj, NULL);
 	ASSERT(reference, "could not allocate new GCStrongReference");
-	obj->pointingReferences.insert(reference);
+	globalLock.ReadUnlock();
 	globalLock.WriteLock();
-	rootObject->ownedReferences.insert(reference);
+	obj->pointingReferences.insert(reference);
+	owningObject->ownedReferences.insert(reference);
 	field->InsertShallow(obj);
 	globalLock.WriteUnlock();
 	return pointer;
 }
 
-void GC_register_object ( void* object, void (*finaliser)(void*) )
+void GC_register_object ( void* object, void* owner, void (*finaliser)(void*) )
 {
 	ASSERT(object, "tried to register bad object");
 	GCObject* obj = new GCObject(object, finaliser, 0);
 	ASSERT(obj, "could not allocate new GCObject");
-	GCStrongReference* reference = new GCStrongReference(rootObject, obj, NULL);
+	globalLock.ReadLock();
+	GCObject* owningObject = GetObject(owner);
+	GCStrongReference* reference = new GCStrongReference(owningObject, obj, NULL);
 	ASSERT(reference, "could not allocate new GCStrongReference");
-	obj->pointingReferences.insert(reference);
+	globalLock.ReadUnlock();
 	globalLock.WriteLock();
-	rootObject->ownedReferences.insert(reference);
+	obj->pointingReferences.insert(reference);
+	owningObject->ownedReferences.insert(reference);
 	field->InsertShallow(obj);
 	globalLock.WriteUnlock();
 }

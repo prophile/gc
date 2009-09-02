@@ -5,7 +5,7 @@ int main ()
 	object obj;
 	GC_init();
 	obj = NEW();
-	GC_autorelease(obj);
+	RELEASE(obj);
 	GC_collect(0);
 	ASSERTDEAD(obj);
 	ASSERTFINAL(obj);
