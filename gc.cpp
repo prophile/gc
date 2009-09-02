@@ -302,6 +302,8 @@ public:
 	}
 	
 	void* GetPointer () { return address; }
+	
+	void Migrate ( void* newTarget );
 };
 
 class GCField
@@ -460,6 +462,23 @@ public:
 			field.erase(iter);
 		else if (parent)
 			parent->Remove(obj);
+	}
+	void Move ( void* oldAddress, void* newAddress )
+	{
+		std::map<void*, GCObject*>::iterator iter = field.find(oldAddress);
+		if (iter == field.end())
+		{
+			if (parent)
+			{
+				parent->Move(oldAddress, newAddress);
+			}
+		}
+		else
+		{
+			GCObject* object = iter->second;
+			field.erase(iter);
+			field.insert(std::make_pair(newAddress, object));
+		}
 	}
 };
 
@@ -659,6 +678,22 @@ void GCStrongReference::TargetDied ()
 	delete this;
 }
 
+void GCObject::Migrate ( void* newTarget )
+{
+	// update field
+	void* oldAddress = address;
+	address = newTarget;
+	// update all references
+	for (std::set<GCReference*>::iterator iter = pointingReferences.begin(); iter != pointingReferences.end(); iter++)
+	{
+		GCReference* ref = *iter;
+		if (ref->PointerLocation())
+			*(ref->PointerLocation()) = newTarget;
+	}
+	// move in main map
+	field->Move(oldAddress, newTarget);
+}
+
 }
 
 void GC_init ()
@@ -783,4 +818,14 @@ bool GC_object_live ( void* object )
 	GCObject* src = GetObject(object);
 	globalLock.ReadUnlock();
 	return src != NULL;
+}
+
+void GC_object_migrate ( void* oldLocation, void* newLocation )
+{
+	globalLock.WriteLock();
+	GCObject* src = GetObject(oldLocation);
+	ASSERT(src, "could not get old object for GC migration");
+	ASSERT(newLocation, "tried to move object to bad location");
+	src->Migrate(newLocation);
+	globalLock.WriteUnlock();
 }

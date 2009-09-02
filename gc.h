@@ -72,6 +72,10 @@ void GC_unregister_weak_reference ( void* object, void* target );
  * Checks if a given object is live.
  */
 bool GC_object_live ( void* object );
+/**
+ * Migrates an object from one memory location to another
+ */
+void GC_object_migrate ( void* oldLocation, void* newLocation );
 
 #ifdef __cplusplus
 }
