@@ -574,6 +574,8 @@ void CollectFull ()
 
 GCObject* GetObject ( void* ptr )
 {
+	if (!ptr)
+		return NULL;
 	GCObject* object = field->Lookup(ptr);
 	//ASSERT(object, "GetObject returned 0");
 	return object;
