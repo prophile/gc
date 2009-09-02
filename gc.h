@@ -87,6 +87,15 @@ unsigned long GC_object_size ( void* object );
  * Resizes a GC-allocated object.
  */
 void GC_object_resize ( void* object, unsigned long newLength );
+/**
+ * Sets the weak reference invalidator.
+ *
+ * The invalidator takes two params:
+ *  param 1 is the object which owns the reference
+ *  param 2 is the pointer to the actual reference
+ * pass NULL to reset to the default, which writes NULL to the pointer.
+ */
+void GC_weak_invalidator ( void (*invalidator)(void*, void**) );
 
 #ifdef __cplusplus
 }

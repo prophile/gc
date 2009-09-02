@@ -31,6 +31,13 @@ bool shuttingDown = false;
 bool disableFinalisers = false;
 bool disableTrivialExecution = false;
 
+static void DefaultWeakInvalidator ( void* source, void** pointer )
+{
+	*pointer = NULL;
+}
+
+void (*weakInvalidator)(void*, void**) = DefaultWeakInvalidator;
+
 class GCObject;
 
 class GCWeakReference;
@@ -643,7 +650,8 @@ void GCWeakReference::TargetDied ()
 	iter = owner->ownedReferences.find(this);
 	ASSERT(iter != owner->ownedReferences.end(), "reference isn't in owned list");
 	owner->ownedReferences.erase(iter);
-	*pointerLocation = NULL;
+	weakInvalidator(owner->Address(), pointerLocation);
+	//*pointerLocation = NULL;
 	delete this;
 }
 
@@ -884,4 +892,11 @@ void GC_object_resize ( void* object, unsigned long newLength )
 	globalLock.WriteLock();
 	src->Resize(newLength);
 	globalLock.WriteUnlock();
+}
+
+void GC_weak_invalidator ( void (*invalidator)(void*, void**) )
+{
+	if (invalidator == NULL)
+		invalidator = DefaultWeakInvalidator;
+	weakInvalidator = invalidator;
 }
