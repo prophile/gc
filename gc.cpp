@@ -292,6 +292,19 @@ public:
 		}
 	}
 	
+	void Migrate ( void* newTarget );
+	
+	void Resize ( size_t len )
+	{
+		ASSERT(selfAssignedLength, "tried to resize non-GC-allocated object");
+		void* newAddress = realloc(address, len);
+		selfAssignedLength = len;
+		if (newAddress != address)
+		{
+			Migrate(newAddress);
+		}
+	}
+	
 	unsigned long GetLength () { return selfAssignedLength; }
 	
 	void Condemn ( GCReference* lastReference );
@@ -309,8 +322,6 @@ public:
 	}
 	
 	void* GetPointer () { return address; }
-	
-	void Migrate ( void* newTarget );
 };
 
 class GCField
@@ -853,4 +864,15 @@ unsigned long GC_object_size ( void* object )
 	unsigned long len = src->GetLength();
 	globalLock.ReadUnlock();
 	return len;
+}
+
+void GC_object_resize ( void* object, unsigned long newLength )
+{
+	globalLock.ReadLock();
+	GCObject* src = GetObject(object);
+	globalLock.ReadUnlock();
+	ASSERT(src, "could not get object to resize");
+	globalLock.WriteLock();
+	src->Resize(newLength);
+	globalLock.WriteUnlock();
 }
