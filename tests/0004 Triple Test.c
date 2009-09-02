@@ -19,14 +19,14 @@ int main ()
 	ASSERTLIVE(obj2);
 	ASSERTLIVE(obj3);
 	ASSERTWRL(o3h);
-	GC_autorelease(obj3);
+	RELEASE(obj3);
 	GC_collect(0);
 	ASSERTLIVE(obj1);
 	ASSERTLIVE(obj2);
 	ASSERTDEAD(obj3);
 	ASSERTWRZ(o3h);
-	GC_autorelease(obj2);
-	GC_autorelease(obj1);
+	RELEASE(obj2);
+	RELEASE(obj1);
 	GC_collect(0);
 	ASSERTDEAD(obj1);
 	ASSERTDEAD(obj2);

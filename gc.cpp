@@ -22,7 +22,7 @@
 #define ASSERT(x, msg)
 #endif
 
-//#define SINGLE_THREADED
+#define SINGLE_THREADED
 
 namespace
 {
@@ -30,6 +30,13 @@ namespace
 bool shuttingDown = false;
 bool disableFinalisers = false;
 bool disableTrivialExecution = false;
+
+static void DefaultWeakInvalidator ( void* source, void** pointer )
+{
+	*pointer = NULL;
+}
+
+void (*weakInvalidator)(void*, void**) = DefaultWeakInvalidator;
 
 class GCObject;
 
@@ -574,6 +581,8 @@ void CollectFull ()
 
 GCObject* GetObject ( void* ptr )
 {
+	if (!ptr)
+		return NULL;
 	GCObject* object = field->Lookup(ptr);
 	//ASSERT(object, "GetObject returned 0");
 	return object;
@@ -641,7 +650,8 @@ void GCWeakReference::TargetDied ()
 	iter = owner->ownedReferences.find(this);
 	ASSERT(iter != owner->ownedReferences.end(), "reference isn't in owned list");
 	owner->ownedReferences.erase(iter);
-	*pointerLocation = NULL;
+	weakInvalidator(owner->Address(), pointerLocation);
+	//*pointerLocation = NULL;
 	delete this;
 }
 
@@ -752,33 +762,39 @@ void GC_collect ( bool partial )
 	globalLock.WriteUnlock();
 }
 
-void* GC_new_object ( unsigned long len, void (*finaliser)(void*) )
+void* GC_new_object ( unsigned long len, void* owner, void (*finaliser)(void*) )
 {
 	if (len < sizeof(void*))
 		len = sizeof(void*);
 	void* pointer = malloc(len);
 	GCObject* obj = new GCObject(pointer, finaliser, len);
 	ASSERT(obj, "could not allocate new GCObject");
-	GCStrongReference* reference = new GCStrongReference(rootObject, obj, NULL);
+	globalLock.ReadLock();
+	GCObject* owningObject = GetObject(owner);
+	GCStrongReference* reference = new GCStrongReference(owningObject, obj, NULL);
 	ASSERT(reference, "could not allocate new GCStrongReference");
-	obj->pointingReferences.insert(reference);
+	globalLock.ReadUnlock();
 	globalLock.WriteLock();
-	rootObject->ownedReferences.insert(reference);
+	obj->pointingReferences.insert(reference);
+	owningObject->ownedReferences.insert(reference);
 	field->InsertShallow(obj);
 	globalLock.WriteUnlock();
 	return pointer;
 }
 
-void GC_register_object ( void* object, void (*finaliser)(void*) )
+void GC_register_object ( void* object, void* owner, void (*finaliser)(void*) )
 {
 	ASSERT(object, "tried to register bad object");
 	GCObject* obj = new GCObject(object, finaliser, 0);
 	ASSERT(obj, "could not allocate new GCObject");
-	GCStrongReference* reference = new GCStrongReference(rootObject, obj, NULL);
+	globalLock.ReadLock();
+	GCObject* owningObject = GetObject(owner);
+	GCStrongReference* reference = new GCStrongReference(owningObject, obj, NULL);
 	ASSERT(reference, "could not allocate new GCStrongReference");
-	obj->pointingReferences.insert(reference);
+	globalLock.ReadUnlock();
 	globalLock.WriteLock();
-	rootObject->ownedReferences.insert(reference);
+	obj->pointingReferences.insert(reference);
+	owningObject->ownedReferences.insert(reference);
 	field->InsertShallow(obj);
 	globalLock.WriteUnlock();
 }
@@ -868,6 +884,7 @@ unsigned long GC_object_size ( void* object )
 
 void GC_object_resize ( void* object, unsigned long newLength )
 {
+	ASSERT(newLength, "tried to resize object to null length");
 	globalLock.ReadLock();
 	GCObject* src = GetObject(object);
 	globalLock.ReadUnlock();
@@ -875,4 +892,11 @@ void GC_object_resize ( void* object, unsigned long newLength )
 	globalLock.WriteLock();
 	src->Resize(newLength);
 	globalLock.WriteUnlock();
+}
+
+void GC_weak_invalidator ( void (*invalidator)(void*, void**) )
+{
+	if (invalidator == NULL)
+		invalidator = DefaultWeakInvalidator;
+	weakInvalidator = invalidator;
 }

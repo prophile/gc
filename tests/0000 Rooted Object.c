@@ -8,7 +8,7 @@ int main ()
 	ASSERTLIVE(obj);
 	GC_collect(0);
 	ASSERTLIVE(obj);
-	GC_autorelease(obj);
+	RELEASE(obj);
 	GC_collect(0);
 	ASSERTDEAD(obj);
 	GC_terminate(0);
