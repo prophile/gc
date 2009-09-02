@@ -40,7 +40,7 @@ void GC_register_object ( void* object, void (*finaliser)(void*) );
  * @param object The object containing the reference.
  * @param target The target of the reference.
  */
-void GC_register_reference ( void* object, void* target );
+void GC_register_reference ( void* object, void* target, void** pointer );
 /**
  * Unregister a reference to an object.
  *
@@ -67,7 +67,7 @@ void GC_register_weak_reference ( void* object, void* target, void** pointer );
  * @param target The target of the reference
  * @param pointer The address of the actual reference
  */
-void GC_unregister_weak_reference ( void* object, void* target, void** pointer );
+void GC_unregister_weak_reference ( void* object, void* target );
 /**
  * Checks if a given object is live.
  */

@@ -179,10 +179,12 @@ class GCReference
 protected:
 	GCObject* owner;
 	GCObject* target;
+	void** pointerLocation;
 public:
-	GCReference ( GCObject* anOwner, GCObject* aTarget )
+	GCReference ( GCObject* anOwner, GCObject* aTarget, void** aPointerLocation )
 	: owner(anOwner),
-	  target(aTarget)
+	  target(aTarget),
+	  pointerLocation(aPointerLocation)
 	{
 		ASSERT(anOwner, "reference constructed with null owner");
 		ASSERT(aTarget, "reference constructed with null target");
@@ -192,13 +194,14 @@ public:
 	{
 	}
 	
-	GCObject* Owner () { return owner; }
-	GCObject* Target () { return target; }
+	void** PointerLocation () const { return pointerLocation; }
+	GCObject* Owner () const { return owner; }
+	GCObject* Target () const { return target; }
 	
 	virtual void OwnerDied () = 0;	
 	virtual void OwnerDisowned () = 0;
 	virtual void TargetDied () = 0;
-	virtual bool IsWeak () = 0;
+	virtual bool IsWeak () const = 0;
 	
 	GCWeakReference* WeakReference ();
 	GCStrongReference* StrongReference ();
@@ -206,8 +209,6 @@ public:
 
 class GCWeakReference : public GCReference
 {
-private:
-	void** pointerLocation;
 public:
 	GCWeakReference ( GCObject* anOwner, GCObject* aTarget, void** aPointerLocation );
 	virtual ~GCWeakReference ();
@@ -216,20 +217,20 @@ public:
 	virtual void OwnerDisowned ();
 	virtual void TargetDied ();
 	
-	virtual bool IsWeak () { return true; }
+	virtual bool IsWeak () const { return true; }
 };
 
 class GCStrongReference : public GCReference
 {
 public:
-	GCStrongReference ( GCObject* anOwner, GCObject* aTarget );
+	GCStrongReference ( GCObject* anOwner, GCObject* aTarget, void** aPointerLocation );
 	virtual ~GCStrongReference ();
 	
 	virtual void OwnerDied ();	
 	virtual void OwnerDisowned ();
 	virtual void TargetDied ();
 	
-	virtual bool IsWeak () { return false; }
+	virtual bool IsWeak () const { return false; }
 };
 
 GCWeakReference* GCReference::WeakReference ()
@@ -503,10 +504,8 @@ void GCObject::Condemn ( GCReference* lastReference )
 GCLock globalLock;
 
 GCWeakReference::GCWeakReference ( GCObject* anOwner, GCObject* aTarget, void** aPointerLocation )
-: GCReference(anOwner, aTarget),
-  pointerLocation(aPointerLocation)
+: GCReference(anOwner, aTarget, aPointerLocation)
 {
-	ASSERT(aPointerLocation, "null pointer location found for weak reference init");
 	DEBUG(printf("[GC] +WR %p => %p (%p)\n", anOwner->Address(), aTarget->Address(), aPointerLocation));
 }
 
@@ -515,10 +514,10 @@ GCWeakReference::~GCWeakReference ()
 	DEBUG(printf("[GC] -WR %p => %p (%p)\n", owner->Address(), target->Address(), pointerLocation));
 }
 
-GCStrongReference::GCStrongReference ( GCObject* anOwner, GCObject* aTarget )
-: GCReference(anOwner, aTarget)
+GCStrongReference::GCStrongReference ( GCObject* anOwner, GCObject* aTarget, void** aPointerLocation )
+: GCReference(anOwner, aTarget, aPointerLocation)
 {
-	DEBUG(printf("[GC] +SR %p => %p\n", anOwner->Address(), aTarget->Address()));
+	DEBUG(printf("[GC] +SR %p => %p (%p)\n", anOwner->Address(), aTarget->Address(), aPointerLocation));
 }
 
 GCStrongReference::~GCStrongReference ()
@@ -709,7 +708,7 @@ void GC_register_object ( void* object, void (*finaliser)(void*) )
 	ASSERT(object, "tried to register bad object");
 	GCObject* obj = new GCObject(object, finaliser);
 	ASSERT(obj, "could not allocate new GCObject");
-	GCStrongReference* reference = new GCStrongReference(rootObject, obj);
+	GCStrongReference* reference = new GCStrongReference(rootObject, obj, NULL);
 	ASSERT(reference, "could not allocate new GCStrongReference");
 	obj->pointingReferences.insert(reference);
 	globalLock.WriteLock();
@@ -718,7 +717,7 @@ void GC_register_object ( void* object, void (*finaliser)(void*) )
 	globalLock.WriteUnlock();
 }
 
-void GC_register_reference ( void* object, void* target )
+void GC_register_reference ( void* object, void* target, void** pointerLocation )
 {
 	globalLock.ReadLock();
 	GCObject* src = GetObject(object);
@@ -726,7 +725,7 @@ void GC_register_reference ( void* object, void* target )
 	GCObject* dst = GetObject(target);
 	ASSERT(dst, "could not get destination object");
 	globalLock.ReadUnlock();
-	GCStrongReference* reference = new GCStrongReference(src, dst);
+	GCStrongReference* reference = new GCStrongReference(src, dst, pointerLocation);
 	ASSERT(reference, "could not allocate strong reference");
 	globalLock.WriteLock();
 	src->ownedReferences.insert(reference);
@@ -752,6 +751,7 @@ void* GC_root ()
 
 void GC_register_weak_reference ( void* object, void* target, void** pointer )
 {
+	ASSERT(pointer, "tried to create weak reference with null location");
 	globalLock.ReadLock();
 	GCObject* src = GetObject(object);
 	ASSERT(src, "could not get source object");

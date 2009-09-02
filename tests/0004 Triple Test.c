@@ -10,8 +10,8 @@ int main ()
 	ASSERTLIVE(obj1);
 	ASSERTLIVE(obj2);
 	ASSERTLIVE(obj3);
-	GC_register_reference(obj1, obj2);
-	GC_register_reference(obj2, obj1);
+	GC_register_reference(obj1, obj2, NULL);
+	GC_register_reference(obj2, obj1, NULL);
 	o3h = obj3;
 	GC_register_weak_reference(GC_root(), obj3, &o3h);
 	GC_collect(0);
