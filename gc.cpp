@@ -22,7 +22,7 @@
 #define ASSERT(x, msg)
 #endif
 
-//#define SINGLE_THREADED
+#define SINGLE_THREADED
 
 namespace
 {
