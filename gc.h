@@ -85,6 +85,10 @@ bool GC_object_live ( void* object );
  * Migrates an object from one memory location to another
  */
 void GC_object_migrate ( void* oldLocation, void* newLocation );
+/**
+ * Returns the size of a GC-allocated object.
+ */
+unsigned long GC_object_size ( void* object );
 
 #ifdef __cplusplus
 }

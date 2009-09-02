@@ -292,6 +292,8 @@ public:
 		}
 	}
 	
+	unsigned long GetLength () { return selfAssignedLength; }
+	
 	void Condemn ( GCReference* lastReference );
 	bool IsCondemned () { return condemned; }
 	
@@ -841,4 +843,14 @@ void GC_object_migrate ( void* oldLocation, void* newLocation )
 	ASSERT(newLocation, "tried to move object to bad location");
 	src->Migrate(newLocation);
 	globalLock.WriteUnlock();
+}
+
+unsigned long GC_object_size ( void* object )
+{
+	globalLock.ReadLock();
+	GCObject* src = GetObject(object);
+	ASSERT(src, "could not get object to look up length");
+	unsigned long len = src->GetLength();
+	globalLock.ReadUnlock();
+	return len;
 }
