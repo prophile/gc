@@ -89,6 +89,10 @@ void GC_object_migrate ( void* oldLocation, void* newLocation );
  * Returns the size of a GC-allocated object.
  */
 unsigned long GC_object_size ( void* object );
+/**
+ * Resizes a GC-allocated object.
+ */
+void GC_object_resize ( void* object, unsigned long newLength );
 
 #ifdef __cplusplus
 }
