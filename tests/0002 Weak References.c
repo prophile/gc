@@ -6,7 +6,7 @@ int main ()
 	GC_init();
 	obj = NEW();
 	handle = obj;
-	GC_register_weak_reference(GC_root(), obj, &handle);
+	GC_register_weak_reference(GC_ROOT, obj, &handle);
 	GC_collect(0);
 	ASSERTLIVE(obj);
 	ASSERTWRL(handle);

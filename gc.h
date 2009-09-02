@@ -42,7 +42,7 @@ void GC_register_object ( void* object, void (*finaliser)(void*) );
  *
  * This should be done on an object after it has been registered with the stack frame.
  */
-#define GC_autorelease(object) GC_unregister_reference(GC_root(), object)
+#define GC_autorelease(object) GC_unregister_reference(GC_ROOT, object)
 /**
  * Register a reference to an object.
  *
@@ -58,9 +58,9 @@ void GC_register_reference ( void* object, void* target, void** pointer );
  */
 void GC_unregister_reference ( void* object, void* target );
 /**
- * Gets the address of the GC root object
+ * The address of the GC root object
  */
-void* GC_root ();
+#define GC_ROOT ((void*)7)
 /**
  * Register a weak reference to an object
  *

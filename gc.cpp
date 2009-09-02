@@ -250,7 +250,6 @@ GCStrongReference* GCReference::StrongReference ()
 }
 
 GCObject* rootObject;
-void* rootObjectPointer; // certainly not a valid pointer
 
 class GCObject
 {
@@ -713,14 +712,10 @@ void GC_init ()
 	DEBUG(printf("[GC] \tsizeof(GCStrongReference) = %d\n", sizeof(GCStrongReference)));
 	DEBUG(printf("[GC] \tsizeof(GCWeakReference) = %d\n", sizeof(GCWeakReference)));
 	DEBUG(printf("[GC] \tsizeof(GCField) = %d\n", sizeof(GCField)));
-	if (sizeof(unsigned long) == 4)
-		rootObjectPointer = (void*)0xCAFEBABEUL;
-	else
-		rootObjectPointer = (void*)0xDEADBEEFFEEDFACEULL;
-	rootObject = new GCObject(rootObjectPointer, 0, 0);
+	rootObject = new GCObject(GC_ROOT, 0, 0);
 	globalLock.WriteLock();
-	field = new GCField(NULL);
-	for (int i = 1; i < FIELDCOUNT; i++)
+	field = NULL;
+	for (int i = 0; i < FIELDCOUNT; i++)
 		field = new GCField(field);
 	field->InsertDeep(rootObject);
 	globalLock.WriteUnlock();
@@ -800,11 +795,6 @@ void GC_unregister_reference ( void* object, void* target )
 	ASSERT(dst, "could not get destination object");
 	globalLock.ReadUnlock();
 	Unreference(src, dst, false);
-}
-
-void* GC_root ()
-{
-	return rootObjectPointer;
 }
 
 void GC_register_weak_reference ( void* object, void* target, void** pointer )
