@@ -766,7 +766,7 @@ void* GC_new_object ( unsigned long len, void* owner, void (*finaliser)(void*) )
 {
 	if (len < sizeof(void*))
 		len = sizeof(void*);
-	void* pointer = malloc(len);
+	void* pointer = calloc(1, len);
 	GCObject* obj = new GCObject(pointer, finaliser, len);
 	ASSERT(obj, "could not allocate new GCObject");
 	globalLock.ReadLock();
