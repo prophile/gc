@@ -12,7 +12,7 @@
 #include <unistd.h>
 #endif
 
-#define GC_DEBUG
+//#define GC_DEBUG
 
 #ifdef GC_DEBUG
 #define DEBUG(x) x
